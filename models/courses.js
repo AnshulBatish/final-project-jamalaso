@@ -143,3 +143,24 @@ async function getCourseRoster(courseId) {
   }  
 exports.getCourseRoster = getCourseRoster;
   
+
+/************* */
+async function getCoursesByInstructorId(instructorId) {
+  const db = getDbReference();
+  const collection = db.collection('courses');
+
+  const courses = await collection.find({ instructorId: instructorId }).toArray();
+
+  return courses;
+}
+exports.getCoursesByInstructorId = getCoursesByInstructorId;
+
+async function getCoursesByStudentId(studentId) {
+  const db = getDbReference();
+  const collection = db.collection('courses');
+
+  const courses = await collection.find({ students: studentId }).toArray();
+
+  return courses;
+}
+exports.getCoursesByStudentId = getCoursesByStudentId;

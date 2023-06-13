@@ -3,13 +3,11 @@ const router = Router()
 const bcrypt = require('bcryptjs');
 const { ObjectId } = require('mongodb');
 
-const { generateAuthToken, requireAuthentication } = require("../lib/auth")
+const { generateAuthToken, requireAuthentication } = require("../lib/auth");
+const { validateAgainstSchema } = require('../lib/validation');
 
-const { getAllUsers, getUserById, insertUser, UserSchema } = require('../models/users');
-
-const {
-  validateUser
-} = require('../models/users')
+const { validateUser, getAllUsers, getUserById, insertUser, UserSchema } = require('../models/users');
+const { getCoursesByInstructorId, getCoursesByStudentId } = require('../models/courses')
 
 
 //FOR TESTING PURPOSES
@@ -23,7 +21,7 @@ router.get('/', async function (req, res) {
   }
 });
 
-
+/** 
 router.post('/', async function (req, res) {
   try {
     const newUser = {
@@ -39,48 +37,93 @@ router.post('/', async function (req, res) {
     res.status(500).json({ error: 'Failed to create user' });
   }
 });
+**/
 
+router.post('/', requireAuthentication, async (req, res) => {
+  if (validateAgainstSchema(req.body, UserSchema)) {
+    const requestingUser = req.user;
 
-router.post('/login', async function (req, res, next) {
-  if (req.body && req.body.email && req.body.password) {
-      try {
-          const authenticated = await validateUser(
-              req.body.email,
-              req.body.password
-          )
-          if (authenticated) {
-              const token = generateAuthToken(req.body.email)
-              res.status(200).send({
-                  token: token
-              })
-          } else {
-              res.status(401).send({
-                  error: "Unauthorized: Invalid authentication credentials"
-              })
-          }
-      } catch (e) {
-          next(e)
+    const newUser = {
+      name: req.body.name,
+      email: req.body.email,
+      password: bcrypt.hashSync(req.body.password, 8),
+      role: req.body.role
+    };
+
+    try {
+      if (!requestingUser.isAdmin && (newUser.role === 'admin' || newUser.role === 'instructor')) {
+        return res.status(403).send({ error: 'Forbidden: You are not allowed to create an admin user.' });
       }
+
+      const id = await insertUser(newUser);
+      res.status(201).send({ id });
+
+    } catch (err) {
+      next(err)
+    }
   } else {
-      res.status(400).send({
-          error: "Request body requires `email` and `password`."
-      })
+    res.status(400).send({
+      error: "Request body is not a valid user object or contains an invalid role."
+    })
   }
 })
 
 
-router.get('/:id', async function (req, res, next) {
-  const reqId = req.params.id;
-  try {
+router.post('/login', async function (req, res, next) {
+  if (req.body && req.body.email && req.body.password) {
+    try {
+      const authenticated = await validateUser(
+        req.body.email,
+        req.body.password
+      )
+      if (authenticated) {
+        const token = generateAuthToken(req.body.email)
+        res.status(200).send({
+          token: token
+        })
+      } else {
+        res.status(401).send({
+          error: "Unauthorized: Invalid authentication credentials"
+        })
+      }
+    } catch (e) {
+      next(e)
+    }
+  } else {
+    res.status(400).send({
+      error: "Request body requires `email` and `password`."
+    })
+  }
+})
 
-    const id = new ObjectId(reqId);
-    const user = await getUserById(id);
+
+router.get('/:id', requireAuthentication, async function (req, res, next) {
+  const requestingUserId = req.user.id;
+  const userId = parseInt(req.params.userId);
+
+  // Check if the authenticated user matches the requested user
+  if (requestingUserId !== userId) {
+    return res.status(403).json({ error: 'Forbidden: You are not allowed to access this user\'s information.' });
+  }
+  
+  try {
+    const userDetails = await getUserById(userId);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { password, ...userDetails } = user;
+    // const { password, ...userDetails } = user;
+
+    if (user.role === 'instructor') {
+      // Get the list of course IDs taught by the instructor
+      const courses = await getCoursesByInstructorId(userId);
+      userDetails.coursesTaught = courses.map(course => course.id);
+    } else if (user.role === 'student') {
+      // Get the list of course IDs enrolled by the student
+      const courses = await getCoursesByStudentId(userId);
+      userDetails.coursesEnrolled = courses.map(course => course.id);
+    }
 
     res.status(200).json({ user: userDetails });
   } catch (error) {
@@ -90,9 +133,5 @@ router.get('/:id', async function (req, res, next) {
     });
   }
 });
-
-
-
-
 
 module.exports = router
